@@ -29,11 +29,15 @@ In this preview, ask Claude to report the conversation, for example "Report this
   on 127.0.0.1. The bridge contacts no other address and writes no files. Only when no Node.js 18+ is found,
   `launch.sh` writes `~/Library/Application Support/OffiAI/bridge-status.json` (the state `no-node` and a time) so
   OffiAI can tell you why the bridge did not start.
-- **Tools** — `offiai_event` reports a step of the conversation; `offiai_status` checks the connection to OffiAI.
+- **Tools** — `offiai_event` reports a step of the conversation; `offiai_reply` sends Claude's answer to a task you started
+  from OffiAI; `offiai_status` checks the connection to OffiAI.
 - **What OffiAI receives** — the conversation label Claude chooses (a short topic plus the start time), one-line
   summaries in Claude's own words, an optional task title, and app-scoped bridge start, heartbeat (every 60 seconds)
-  and end messages. Never secrets, credentials, personal data, verbatim prompts, file contents or transcripts; for a
-  sensitive topic Claude uses a neutral label.
+  and end messages. Only for a task you start from OffiAI's **New Cowork task** button (its text ends with the line
+  `(from OffiAI)`): a copy of Claude's answer to that message, at most 2000 characters. OffiAI shows it in the desk's
+  drawer, masks credentials, e-mail addresses and local paths, and keeps it only in memory while it runs. Other turns and
+  conversations never send answer text. Never secrets or credentials; apart from those replies, never personal data,
+  verbatim prompts, file contents or transcripts; for a sensitive topic Claude uses a neutral label.
 - **Skill `offiai`** — the reporting rules below.
 - **Hooks** (`SessionStart`, `UserPromptSubmit`) — `hooks/remind.sh` prints a one-line reminder for Claude. It reads
   no files and uses no network. It stays silent in a local Claude Code CLI.
@@ -53,8 +57,20 @@ Only in the Claude desktop app — the Claude Code CLI needs no plugin, because 
 - If told "not running or not paired": do not retry and do not mention it again. If the offiai tools are missing, no
   call is made; Claude says once that OffiAI's bridge did not start.
 
+Only when your message ends with the line `(from OffiAI)`: Claude reports first, does the work, then calls
+`offiai_reply` once with a copy of its answer (at most 2000 characters; a longer answer is summarized and ends with
+"Full answer in Claude."), and writes the complete answer after that call. The reply comes before the visible answer,
+never after it, so the full answer stays visible in Claude. Later turns and other conversations send no reply.
+
 A desk stays while the bridge runs and goes idle a minute after the last report; it ends when the Claude app stops the
 bridge. Two conversations with the same label share a desk.
+
+## Asking from OffiAI
+
+Click a Cowork desk in OffiAI, write a question in its drawer and press **New Cowork task**. The Claude app opens a new
+Cowork task with your text filled in, followed by the line `(from OffiAI)`. Claude shows a caution banner for text that
+comes from a link; that is expected. Nothing is sent until you press send in Claude. The answer appears on the new task's
+desk. OffiAI never types into Claude and needs no extra macOS permission.
 
 ## Privacy, support, licence
 

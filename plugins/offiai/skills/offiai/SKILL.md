@@ -1,6 +1,6 @@
 ---
 name: offiai
-description: 'Only in the Claude desktop app: FIRST in every turn, including trivial prompts and the first turn, attempt exactly one offiai_event(kind:"prompt", conversation: the label, summary: one line) before any assistant prose; discovery/skill-reading may precede it. Do not load this skill or call its tools in Claude Code CLI. The model cannot see the app title: first choose a two-to-six-word neutral topic of the request plus " · " plus the first message date and time as MM-DD HH:MM (Weekly team meeting agenda · 10-22 09:51); later copy conversation verbatim from the earliest offiai_event call in this conversation. Never use OffiAI/check-in. Then provide the complete requested answer after the LAST tool call, outside collapsed plugin usage. Never append an OffiAI call after answer text. No automatic progress, blocked, done, status or retry calls. If tools are missing no call is required; follow the one-time failure notice.'
+description: 'Only in the Claude desktop app: FIRST in every turn, including trivial prompts and the first turn, attempt exactly one offiai_event(kind:"prompt", conversation: the label, summary: one line) before any assistant prose; discovery/skill-reading may precede it. Do not load this skill or call its tools in Claude Code CLI. You cannot see the app title: first choose a two-to-six-word neutral topic plus " · " plus the first message date and time as MM-DD HH:MM (Weekly team meeting agenda · 10-22 09:51); later copy conversation verbatim from the earliest offiai_event call. Never use OffiAI/check-in. Only if the current user message ends with the line (from OffiAI): after the work call offiai_reply once (same conversation, a copy of your answer, at most 2000 characters). Then provide the complete requested answer after the LAST tool call. Never append an OffiAI call after answer text. No automatic progress, blocked, done, status or retry calls. If tools are missing no call is required; give the one-time notice.'
 ---
 
 Only in the Claude desktop app. Do not load this skill or call its tools in Claude Code CLI.
@@ -23,14 +23,25 @@ group. Never append an OffiAI call after answer text. No automatic progress, blo
 done, status or retry calls. Older clients' event kinds remain supported by the bridge.
 Optional `task` is a short work title, never desk identity.
 
+Replies to OffiAI: only when the current user message ends with the line `(from OffiAI)`
+(OffiAI's New Cowork task button adds it), keep this order: report with the prompt event
+first, do the work, then call `offiai_reply` once with the same `conversation` value and a
+copy of your answer, at most 2000 characters (a longer answer: a summary of at most 2000
+characters ending with "Full answer in Claude."), and only then write the complete answer.
+The reply comes before the visible answer, so it is the LAST tool call and the answer stays
+visible. The reply is a copy: the user still reads the full answer in Claude. Later turns
+and messages without that line never call `offiai_reply`. Do not retry it when it answers
+"not running", "invalid" or "does not show replies".
+
 If the tool answers "not running or not paired", do not retry and do not mention it again.
 If the offiai tools are missing entirely, no call is required; tell the user once:
 "OffiAI's bridge did not start — open the OffiAI install page (Node.js 18+ is required)."
 
 OffiAI receives the conversation stable label, optional task title, one-line summaries,
 and app-scoped bridge start/heartbeat/end. Use a neutral stable label for sensitive topics.
-Never send secrets, credentials, personal data, verbatim prompts, file contents or
-transcripts. Summarize work in your own words. Tool delivery stays on the Mac
+Never send secrets or credentials. Only on a turn whose message ends with `(from OffiAI)`,
+`offiai_reply` sends a copy of Claude's own answer; apart from that, never send personal
+data, verbatim prompts, file contents or transcripts. Summarize work in your own words. Tool delivery stays on the Mac
 (127.0.0.1); cloud hooks only remind the model.
 
 Reporting is cooperative: a connected bridge is not proof of conversation activity.

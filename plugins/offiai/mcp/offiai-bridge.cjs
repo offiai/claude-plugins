@@ -11,12 +11,20 @@ var import_node_path = require("node:path");
 var HTTP_TIMEOUT_MS = 1500;
 var HEARTBEAT_INTERVAL_MS = 6e4;
 var MAX_LINE_BYTES = 64 * 1024;
+var BRIDGE_VERSION = "0.3.0";
+var MAX_BODY_BYTES = 4096;
+var LEGACY_VERSION = "0.2.0";
+var REPLY_MAX = 2e3;
 var NOT_PAIRED = "OffiAI app not running or not paired \u2014 continue normally.";
 var CLI_MESSAGE = "OffiAI observes Claude Code CLI sessions directly \u2014 nothing sent.";
-var REPORTING_RULE = 'Only in the Claude desktop app: FIRST in every turn, including trivial prompts and the first turn, attempt exactly one offiai_event(kind:"prompt", conversation:<title>, summary:<one line>) before any assistant prose; discovery/skill-reading may precede it. Do not load this skill or call its tools in Claude Code CLI. The model cannot see the app title: first choose a two-to-six-word neutral topic of the request plus " \xB7 " plus the first message date and time as MM-DD HH:MM (Weekly team meeting agenda \xB7 10-22 09:51); later copy conversation verbatim from the earliest offiai_event call in this conversation. Never use OffiAI/check-in. Then provide the complete requested answer after the LAST tool call, outside collapsed plugin usage. Never append an OffiAI call after answer text. No automatic progress, blocked, done, status or retry calls. If tools are missing no call is required; follow the one-time failure notice.';
-var PRIVACY_RULE = ` Never send secrets, credentials, personal data, verbatim prompts, file contents or transcripts. Use a neutral stable label for sensitive topics. The label is a nonblank single line, trimmed without changing case, at most 120 characters. If not running or not paired, do not retry or mention it again. If tools are missing, tell the user once: "OffiAI's bridge did not start \u2014 open the OffiAI install page (Node.js 18+ is required)."`;
+var REPLY_SHOWN = "OffiAI: reply shown. Now write the complete answer for the user after this call.";
+var REPLY_SHORTENED = "OffiAI: reply shown (shortened to fit). Now write the complete answer for the user after this call.";
+var REPLY_LEGACY = "OffiAI: this OffiAI version does not show replies \u2014 continue normally.";
+var REPORTING_RULE = 'Only in the Claude desktop app: FIRST in every turn, including trivial prompts and the first turn, attempt exactly one offiai_event(kind:"prompt", conversation: the label, summary: one line) before any assistant prose; discovery/skill-reading may precede it. Do not load this skill or call its tools in Claude Code CLI. You cannot see the app title: first choose a two-to-six-word neutral topic plus " \xB7 " plus the first message date and time as MM-DD HH:MM (Weekly team meeting agenda \xB7 10-22 09:51); later copy conversation verbatim from the earliest offiai_event call. Never use OffiAI/check-in. Only if the current user message ends with the line (from OffiAI): after the work call offiai_reply once (same conversation, a copy of your answer, at most 2000 characters). Then provide the complete requested answer after the LAST tool call. Never append an OffiAI call after answer text. No automatic progress, blocked, done, status or retry calls. If tools are missing no call is required; give the one-time notice.';
+var PRIVACY_RULE = ` Never send secrets or credentials. Apart from the offiai_reply copy of your own answer on a turn whose message ends with the line (from OffiAI), never send personal data, verbatim prompts, file contents or transcripts. Use a neutral stable label for sensitive topics. The label is a nonblank single line, trimmed without changing case, at most 120 characters. If not running or not paired, do not retry or mention it again. If tools are missing, tell the user once: "OffiAI's bridge did not start \u2014 open the OffiAI install page (Node.js 18+ is required)."`;
 var BRIDGE_INSTRUCTIONS = "The user runs OffiAI, which shows conversations at desks on this Mac. " + REPORTING_RULE + PRIVACY_RULE;
 var EVENT_DESCRIPTION = REPORTING_RULE + PRIVACY_RULE;
+var REPLY_DESCRIPTION = 'Only in the Claude desktop app, and only when the current user message ends with the line (from OffiAI): report first with offiai_event(kind:"prompt"), do the work, then call offiai_reply once with the same conversation value and a copy of your answer, at most 2000 characters; if the answer is longer, send a summary of at most 2000 characters that ends with "Full answer in Claude.". Then write the complete answer for the user as text after this call, after the LAST tool call: the reply is a copy; the visible answer follows this call. Never call it on other turns or after answer text. Do not retry if it answers not running, invalid or does not show replies. Never include secrets or credentials.';
 var CLI_DESCRIPTION = "Not needed in the Claude Code CLI: OffiAI observes CLI sessions directly. Do not call it.";
 var record = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 function parseEvent(value) {
@@ -29,6 +37,17 @@ function parseEvent(value) {
   if (value["task"] !== void 0 && (typeof value["task"] !== "string" || value["task"].length > 120 || /[\r\n]/.test(value["task"]))) return "task";
   if (Object.keys(value).some((key) => !["kind", "conversation", "summary", "task"].includes(key))) return "unknown field";
   return { kind, conversation: conversation.trim(), summary: value["summary"], ...typeof value["task"] === "string" ? { task: value["task"] } : {} };
+}
+var REPLY_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f]/;
+var LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+function parseReply(value) {
+  if (!record(value)) return "expected an object";
+  const conversation = value["conversation"];
+  if (typeof conversation !== "string" || !conversation.trim() || conversation.trim().length > 120 || /[\r\n]/.test(conversation)) return "conversation";
+  const text = typeof value["text"] === "string" ? value["text"].replace(/\r\n/g, "\n") : null;
+  if (text === null || !text.trim() || text.length > REPLY_MAX || REPLY_CONTROL.test(text) || LONE_SURROGATE.test(text)) return "text";
+  if (Object.keys(value).some((key) => !["conversation", "text"].includes(key))) return "unknown field";
+  return { conversation: conversation.trim(), text };
 }
 function parsePairing(text, mode) {
   if ((mode & 127) !== 0) return null;
@@ -46,9 +65,22 @@ function createCoworkBridge(ports) {
   let acknowledged = null, lastAcknowledged = 0;
   let queue = Promise.resolve();
   let metaKeys = [];
+  let legacy = null;
   const unavailable = { reachable: false, paired: false };
   const SESSION_RECOVERY_MS = 18e4;
   const samePairing = (pairing) => pairing.token === acknowledged?.token && pairing.port === acknowledged.port;
+  const isLegacy = (pairing) => pairing.token === legacy?.token && pairing.port === legacy.port;
+  const bytes = (text) => new TextEncoder().encode(text).length;
+  function serialize(envelope, event) {
+    const body = JSON.stringify({ ...envelope, ...event ? { event } : {} });
+    if (event?.kind !== "reply" || bytes(body) <= MAX_BODY_BYTES) return { body, shortened: false };
+    const points = Array.from(event.text);
+    for (let keep = points.length - 1; keep >= 0; keep--) {
+      const shorter = JSON.stringify({ ...envelope, event: { ...event, text: points.slice(0, keep).join("") + "\u2026" } });
+      if (bytes(shorter) <= MAX_BODY_BYTES) return { body: shorter, shortened: true };
+    }
+    return { body, shortened: false };
+  }
   function bounded(work, deadline, fallback) {
     const remaining = deadline - ports.now();
     if (remaining <= 0) return Promise.resolve(fallback);
@@ -68,21 +100,25 @@ function createCoworkBridge(ports) {
   async function send(pairing, type, deadline, event) {
     const remaining = deadline - ports.now();
     if (remaining <= 0) return unavailable;
-    const body = JSON.stringify({
+    const fallback = type === "session.start" && !isLegacy(pairing);
+    const { body, shortened } = serialize({
       v: 1,
       session: ports.session,
       seq: seq++,
       type,
       at: ports.now(),
       ...type !== "event" ? { scope: "app" } : {},
-      ...type === "session.start" ? { version: "0.2.0" } : {},
-      ...event ? { event } : {}
-    });
+      ...type === "session.start" ? { version: fallback ? BRIDGE_VERSION : LEGACY_VERSION } : {}
+    }, event);
     try {
       const status = await ports.post(pairing, body, remaining);
       if (status === 204) {
         lastAcknowledged = ports.now();
-        return { reachable: true, paired: true };
+        return { reachable: true, paired: true, ...shortened ? { shortened } : {} };
+      }
+      if (status === 400 && fallback) {
+        legacy = pairing;
+        return await send(pairing, type, deadline);
       }
     } catch {
     }
@@ -97,6 +133,7 @@ function createCoworkBridge(ports) {
         acknowledged = null;
         return unavailable;
       }
+      if (legacy !== null && !isLegacy(pairing)) legacy = null;
       if (ports.now() >= deadline || ended && type !== "session.end") return unavailable;
       if (type !== "session.start" && type !== "session.end" && (!samePairing(pairing) || ports.now() - lastAcknowledged >= SESSION_RECOVERY_MS)) {
         const result2 = await send(pairing, "session.start", deadline);
@@ -104,6 +141,7 @@ function createCoworkBridge(ports) {
         acknowledged = pairing;
         continue;
       }
+      if (event?.kind === "reply" && isLegacy(pairing)) return { reachable: true, paired: true, legacy: true };
       const result = await send(pairing, type, deadline, event);
       if (type === "session.start" && result.reachable) acknowledged = pairing;
       return result;
@@ -137,6 +175,13 @@ function createCoworkBridge(ports) {
       const result = await post("event", event);
       return textResult(result.reachable ? `OffiAI: shown. Conversation: "${event.conversation.slice(0, 120)}".` : NOT_PAIRED);
     }
+    if (name === "offiai_reply") {
+      if (cli) return textResult(CLI_MESSAGE);
+      const reply = parseReply(args);
+      if (typeof reply === "string") return textResult(`OffiAI: invalid reply (${reply}) \u2014 not sent.`);
+      const result = await post("event", { kind: "reply", ...reply });
+      return textResult(!result.reachable ? NOT_PAIRED : result.legacy ? REPLY_LEGACY : result.shortened ? REPLY_SHORTENED : REPLY_SHOWN);
+    }
     if (name === "offiai_status") {
       const result = await post("session.heartbeat");
       return textResult(JSON.stringify({ reachable: result.reachable, paired: result.paired, metaKeys }));
@@ -159,7 +204,7 @@ function createCoworkBridge(ports) {
     let result;
     switch (request2["method"]) {
       case "initialize":
-        result = { protocolVersion: params["protocolVersion"], capabilities: { tools: {} }, serverInfo: { name: "offiai", version: "0.2.0" }, ...cli ? {} : { instructions: BRIDGE_INSTRUCTIONS } };
+        result = { protocolVersion: params["protocolVersion"], capabilities: { tools: {} }, serverInfo: { name: "offiai", version: BRIDGE_VERSION }, ...cli ? {} : { instructions: BRIDGE_INSTRUCTIONS } };
         break;
       case "ping":
         result = {};
@@ -167,6 +212,7 @@ function createCoworkBridge(ports) {
       case "tools/list":
         result = { tools: [
           { name: "offiai_event", description: cli ? CLI_DESCRIPTION : EVENT_DESCRIPTION, inputSchema: { type: "object", properties: { kind: { type: "string", enum: ["prompt", "progress", "done", "blocked"] }, conversation: { type: "string", minLength: 1, maxLength: 120, description: "First neutral topic \xB7 MM-DD HH:MM; later copy the earliest offiai_event conversation value verbatim. Nonblank single line, trimmed, at most 120 characters" }, summary: { type: "string", maxLength: 280 }, task: { type: "string", maxLength: 120 } }, required: ["kind", "conversation", "summary"], additionalProperties: false } },
+          { name: "offiai_reply", description: cli ? CLI_DESCRIPTION : REPLY_DESCRIPTION, inputSchema: { type: "object", properties: { conversation: { type: "string", minLength: 1, maxLength: 120 }, text: { type: "string", minLength: 1, maxLength: REPLY_MAX } }, required: ["conversation", "text"], additionalProperties: false } },
           { name: "offiai_status", description: "Check the local OffiAI bridge", inputSchema: { type: "object", properties: {}, additionalProperties: false } }
         ] };
         break;
