@@ -11,20 +11,27 @@ var import_node_path = require("node:path");
 var HTTP_TIMEOUT_MS = 1500;
 var HEARTBEAT_INTERVAL_MS = 6e4;
 var MAX_LINE_BYTES = 64 * 1024;
-var BRIDGE_VERSION = "0.3.0";
+var BRIDGE_VERSION = "0.3.1";
 var MAX_BODY_BYTES = 4096;
 var LEGACY_VERSION = "0.2.0";
+var REPLY_VERSION = "0.3.0";
 var REPLY_MAX = 2e3;
 var NOT_PAIRED = "OffiAI app not running or not paired \u2014 continue normally.";
 var CLI_MESSAGE = "OffiAI observes Claude Code CLI sessions directly \u2014 nothing sent.";
 var REPLY_SHOWN = "OffiAI: reply shown. Now write the complete answer for the user after this call.";
 var REPLY_SHORTENED = "OffiAI: reply shown (shortened to fit). Now write the complete answer for the user after this call.";
 var REPLY_LEGACY = "OffiAI: this OffiAI version does not show replies \u2014 continue normally.";
-var REPORTING_RULE = 'Only in the Claude desktop app: FIRST in every turn, including trivial prompts and the first turn, attempt exactly one offiai_event(kind:"prompt", conversation: the label, summary: one line) before any assistant prose; discovery/skill-reading may precede it. Do not load this skill or call its tools in Claude Code CLI. You cannot see the app title: first choose a two-to-six-word neutral topic plus " \xB7 " plus the first message date and time as MM-DD HH:MM (Weekly team meeting agenda \xB7 10-22 09:51); later copy conversation verbatim from the earliest offiai_event call. Never use OffiAI/check-in. Only if the current user message ends with the line (from OffiAI): after the work call offiai_reply once (same conversation, a copy of your answer, at most 2000 characters). Then provide the complete requested answer after the LAST tool call. Never append an OffiAI call after answer text. No automatic progress, blocked, done, status or retry calls. If tools are missing no call is required; give the one-time notice.';
-var PRIVACY_RULE = ` Never send secrets or credentials. Apart from the offiai_reply copy of your own answer on a turn whose message ends with the line (from OffiAI), never send personal data, verbatim prompts, file contents or transcripts. Use a neutral stable label for sensitive topics. The label is a nonblank single line, trimmed without changing case, at most 120 characters. If not running or not paired, do not retry or mention it again. If tools are missing, tell the user once: "OffiAI's bridge did not start \u2014 open the OffiAI install page (Node.js 18+ is required)."`;
+var REPLY_ALREADY = "OffiAI: reply already sent for this turn \u2014 not sent.";
+var REPLY_NO_PROMPT = "OffiAI: reply not sent \u2014 no prompt event for this conversation; continue normally.";
+var REPLY_NO_DESK = "OffiAI: reply not shown \u2014 no desk for this conversation.";
+var REPLY_DROPPED_STATUS = 202;
+var MAX_TURNS = 64;
+var MAX_ARMED = 4;
+var REPORTING_RULE = 'Only in the Claude desktop app: FIRST in every turn, including trivial prompts and the first turn, attempt exactly one offiai_event(kind:"prompt", conversation: the label, summary: one line) before any assistant prose; discovery/skill-reading may precede it. Do not load this skill or call its tools in Claude Code CLI. You cannot see the app title: first choose a two-to-six-word neutral topic plus " \xB7 " plus the first message date and time as MM-DD HH:MM (Weekly team meeting agenda \xB7 10-22 09:51); later copy conversation verbatim from the earliest offiai_event call. Never use OffiAI/check-in. Only if the current user message ends with the line "(from OffiAI)": after the work call offiai_reply once (same conversation, a copy of your answer, at most 2000 characters). Then provide the complete requested answer after the LAST tool call. Never append an OffiAI call after answer text. No automatic progress, blocked, done, status or retry calls. If tools are missing no call is required; give the one-time notice.';
+var PRIVACY_RULE = ` Never send secrets or credentials. Apart from the offiai_reply copy of your own answer on a turn whose message ends with the line "(from OffiAI)", never send personal data, verbatim prompts, file contents or transcripts. Use a neutral stable label for sensitive topics. The label is a nonblank single line, trimmed without changing case, at most 120 characters. If an OffiAI tool answers not running or not paired, do not retry or mention it again; do not retry one that answers invalid, does not show replies, already sent, not shown or no prompt event either. If tools are missing, tell the user once: "OffiAI's bridge did not start \u2014 open the OffiAI install page (Node.js 18+ is required)."`;
 var BRIDGE_INSTRUCTIONS = "The user runs OffiAI, which shows conversations at desks on this Mac. " + REPORTING_RULE + PRIVACY_RULE;
 var EVENT_DESCRIPTION = REPORTING_RULE + PRIVACY_RULE;
-var REPLY_DESCRIPTION = 'Only in the Claude desktop app, and only when the current user message ends with the line (from OffiAI): report first with offiai_event(kind:"prompt"), do the work, then call offiai_reply once with the same conversation value and a copy of your answer, at most 2000 characters; if the answer is longer, send a summary of at most 2000 characters that ends with "Full answer in Claude.". Then write the complete answer for the user as text after this call, after the LAST tool call: the reply is a copy; the visible answer follows this call. Never call it on other turns or after answer text. Do not retry if it answers not running, invalid or does not show replies. Never include secrets or credentials.';
+var REPLY_DESCRIPTION = 'Only in the Claude desktop app, and only when the current user message ends with the line "(from OffiAI)": report first with offiai_event(kind:"prompt"), do the work, then call offiai_reply once with the same conversation value and a copy of your answer, at most 2000 characters; if the answer is longer, send a summary of at most 2000 characters that ends with "Full answer in Claude.". Then write the complete answer for the user as text after this call, after the LAST tool call: the reply is a copy; the visible answer follows this call. Never call it on other turns or after answer text. The bridge takes one reply per prompt event of the conversation and shortens a longer text. Do not retry if it answers not running, invalid, does not show replies, already sent, not shown or no prompt event. Never include secrets or credentials.';
 var CLI_DESCRIPTION = "Not needed in the Claude Code CLI: OffiAI observes CLI sessions directly. Do not call it.";
 var record = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 function parseEvent(value) {
@@ -40,14 +47,23 @@ function parseEvent(value) {
 }
 var REPLY_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f]/;
 var LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+function fitReply(text) {
+  if (text.length <= REPLY_MAX) return { text, shortened: false };
+  let kept = "";
+  for (const point of text) {
+    if (kept.length + point.length > REPLY_MAX - 1) break;
+    kept += point;
+  }
+  return { text: kept + "\u2026", shortened: true };
+}
 function parseReply(value) {
   if (!record(value)) return "expected an object";
   const conversation = value["conversation"];
   if (typeof conversation !== "string" || !conversation.trim() || conversation.trim().length > 120 || /[\r\n]/.test(conversation)) return "conversation";
   const text = typeof value["text"] === "string" ? value["text"].replace(/\r\n/g, "\n") : null;
-  if (text === null || !text.trim() || text.length > REPLY_MAX || REPLY_CONTROL.test(text) || LONE_SURROGATE.test(text)) return "text";
+  if (text === null || !text.trim() || REPLY_CONTROL.test(text) || LONE_SURROGATE.test(text)) return "text";
   if (Object.keys(value).some((key) => !["conversation", "text"].includes(key))) return "unknown field";
-  return { conversation: conversation.trim(), text };
+  return { conversation: conversation.trim(), ...fitReply(text) };
 }
 function parsePairing(text, mode) {
   if ((mode & 127) !== 0) return null;
@@ -65,11 +81,23 @@ function createCoworkBridge(ports) {
   let acknowledged = null, lastAcknowledged = 0;
   let queue = Promise.resolve();
   let metaKeys = [];
-  let legacy = null;
+  let previous = null, legacy = null;
+  const turns = /* @__PURE__ */ new Map();
+  const touch = (conversation) => {
+    const state = turns.get(conversation) ?? { armed: 0, sending: 0, replied: false };
+    turns.delete(conversation);
+    turns.set(conversation, state);
+    for (const oldest of turns.keys()) {
+      if (turns.size <= MAX_TURNS) break;
+      turns.delete(oldest);
+    }
+    return state;
+  };
   const unavailable = { reachable: false, paired: false };
   const SESSION_RECOVERY_MS = 18e4;
   const samePairing = (pairing) => pairing.token === acknowledged?.token && pairing.port === acknowledged.port;
   const isLegacy = (pairing) => pairing.token === legacy?.token && pairing.port === legacy.port;
+  const isPrevious = (pairing) => pairing.token === previous?.token && pairing.port === previous.port;
   const bytes = (text) => new TextEncoder().encode(text).length;
   function serialize(envelope, event) {
     const body = JSON.stringify({ ...envelope, ...event ? { event } : {} });
@@ -101,6 +129,7 @@ function createCoworkBridge(ports) {
     const remaining = deadline - ports.now();
     if (remaining <= 0) return unavailable;
     const fallback = type === "session.start" && !isLegacy(pairing);
+    const version = isLegacy(pairing) ? LEGACY_VERSION : isPrevious(pairing) ? REPLY_VERSION : BRIDGE_VERSION;
     const { body, shortened } = serialize({
       v: 1,
       session: ports.session,
@@ -108,7 +137,7 @@ function createCoworkBridge(ports) {
       type,
       at: ports.now(),
       ...type !== "event" ? { scope: "app" } : {},
-      ...type === "session.start" ? { version: fallback ? BRIDGE_VERSION : LEGACY_VERSION } : {}
+      ...type === "session.start" ? { version } : {}
     }, event);
     try {
       const status = await ports.post(pairing, body, remaining);
@@ -116,8 +145,13 @@ function createCoworkBridge(ports) {
         lastAcknowledged = ports.now();
         return { reachable: true, paired: true, ...shortened ? { shortened } : {} };
       }
+      if (status === REPLY_DROPPED_STATUS && event?.kind === "reply") {
+        lastAcknowledged = ports.now();
+        return { reachable: true, paired: true, dropped: true };
+      }
       if (status === 400 && fallback) {
-        legacy = pairing;
+        if (isPrevious(pairing)) legacy = pairing;
+        else previous = pairing;
         return await send(pairing, type, deadline);
       }
     } catch {
@@ -134,6 +168,7 @@ function createCoworkBridge(ports) {
         return unavailable;
       }
       if (legacy !== null && !isLegacy(pairing)) legacy = null;
+      if (previous !== null && !isPrevious(pairing)) previous = null;
       if (ports.now() >= deadline || ended && type !== "session.end") return unavailable;
       if (type !== "session.start" && type !== "session.end" && (!samePairing(pairing) || ports.now() - lastAcknowledged >= SESSION_RECOVERY_MS)) {
         const result2 = await send(pairing, "session.start", deadline);
@@ -172,6 +207,10 @@ function createCoworkBridge(ports) {
       if (cli) return textResult(CLI_MESSAGE);
       const event = parseEvent(args);
       if (typeof event === "string") return textResult(`OffiAI: invalid event (${event}) \u2014 not sent.`);
+      if (event.kind === "prompt") {
+        const state = touch(event.conversation);
+        state.armed = Math.min(state.armed + 1, MAX_ARMED);
+      }
       const result = await post("event", event);
       return textResult(result.reachable ? `OffiAI: shown. Conversation: "${event.conversation.slice(0, 120)}".` : NOT_PAIRED);
     }
@@ -179,8 +218,16 @@ function createCoworkBridge(ports) {
       if (cli) return textResult(CLI_MESSAGE);
       const reply = parseReply(args);
       if (typeof reply === "string") return textResult(`OffiAI: invalid reply (${reply}) \u2014 not sent.`);
-      const result = await post("event", { kind: "reply", ...reply });
-      return textResult(!result.reachable ? NOT_PAIRED : result.legacy ? REPLY_LEGACY : result.shortened ? REPLY_SHORTENED : REPLY_SHOWN);
+      const turn = turns.get(reply.conversation);
+      if (!turn?.armed) return textResult(turn && (turn.replied || turn.sending > 0) ? REPLY_ALREADY : REPLY_NO_PROMPT);
+      turn.armed--;
+      turn.sending++;
+      const { shortened, ...copy } = reply, result = await post("event", { kind: "reply", ...copy });
+      const state = touch(reply.conversation);
+      state.sending = Math.max(state.sending - 1, 0);
+      if (result.reachable) state.replied = true;
+      else state.armed = Math.min(state.armed + 1, MAX_ARMED);
+      return textResult(!result.reachable ? NOT_PAIRED : result.legacy ? REPLY_LEGACY : result.dropped ? REPLY_NO_DESK : shortened || result.shortened ? REPLY_SHORTENED : REPLY_SHOWN);
     }
     if (name === "offiai_status") {
       const result = await post("session.heartbeat");

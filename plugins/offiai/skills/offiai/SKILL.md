@@ -1,6 +1,6 @@
 ---
 name: offiai
-description: 'Only in the Claude desktop app: FIRST in every turn, including trivial prompts and the first turn, attempt exactly one offiai_event(kind:"prompt", conversation: the label, summary: one line) before any assistant prose; discovery/skill-reading may precede it. Do not load this skill or call its tools in Claude Code CLI. You cannot see the app title: first choose a two-to-six-word neutral topic plus " · " plus the first message date and time as MM-DD HH:MM (Weekly team meeting agenda · 10-22 09:51); later copy conversation verbatim from the earliest offiai_event call. Never use OffiAI/check-in. Only if the current user message ends with the line (from OffiAI): after the work call offiai_reply once (same conversation, a copy of your answer, at most 2000 characters). Then provide the complete requested answer after the LAST tool call. Never append an OffiAI call after answer text. No automatic progress, blocked, done, status or retry calls. If tools are missing no call is required; give the one-time notice.'
+description: 'Only in the Claude desktop app: FIRST in every turn, including trivial prompts and the first turn, attempt exactly one offiai_event(kind:"prompt", conversation: the label, summary: one line) before any assistant prose; discovery/skill-reading may precede it. Do not load this skill or call its tools in Claude Code CLI. You cannot see the app title: first choose a two-to-six-word neutral topic plus " · " plus the first message date and time as MM-DD HH:MM (Weekly team meeting agenda · 10-22 09:51); later copy conversation verbatim from the earliest offiai_event call. Never use OffiAI/check-in. Only if the current user message ends with the line "(from OffiAI)": after the work call offiai_reply once (same conversation, a copy of your answer, at most 2000 characters). Then provide the complete requested answer after the LAST tool call. Never append an OffiAI call after answer text. No automatic progress, blocked, done, status or retry calls. If tools are missing no call is required; give the one-time notice.'
 ---
 
 Only in the Claude desktop app. Do not load this skill or call its tools in Claude Code CLI.
@@ -30,8 +30,11 @@ copy of your answer, at most 2000 characters (a longer answer: a summary of at m
 characters ending with "Full answer in Claude."), and only then write the complete answer.
 The reply comes before the visible answer, so it is the LAST tool call and the answer stays
 visible. The reply is a copy: the user still reads the full answer in Claude. Later turns
-and messages without that line never call `offiai_reply`. Do not retry it when it answers
-"not running", "invalid" or "does not show replies".
+and messages without that line never call `offiai_reply`. The bridge takes one reply per prompt
+event of the conversation (a second call answers "reply already sent for this turn") and
+shortens a text over 2000 characters. Do not retry it when it answers "not running",
+"invalid", "does not show replies", "already sent", "not shown" or "no prompt event", and
+send no new prompt event to make up for "no prompt event".
 
 If the tool answers "not running or not paired", do not retry and do not mention it again.
 If the offiai tools are missing entirely, no call is required; tell the user once:
@@ -39,8 +42,8 @@ If the offiai tools are missing entirely, no call is required; tell the user onc
 
 OffiAI receives the conversation stable label, optional task title, one-line summaries,
 and app-scoped bridge start/heartbeat/end. Use a neutral stable label for sensitive topics.
-Never send secrets or credentials. Only on a turn whose message ends with `(from OffiAI)`,
-`offiai_reply` sends a copy of Claude's own answer; apart from that, never send personal
+Never send secrets or credentials. Call `offiai_reply` only on a turn whose message ends
+with `(from OffiAI)`, with a copy of your own answer; apart from that, never send personal
 data, verbatim prompts, file contents or transcripts. Summarize work in your own words. Tool delivery stays on the Mac
 (127.0.0.1); cloud hooks only remind the model.
 
