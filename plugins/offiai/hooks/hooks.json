@@ -1,0 +1,1 @@
+{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"sh \"${CLAUDE_PLUGIN_ROOT}/hooks/remind.sh\" SessionStart","timeout":5}]}],"UserPromptSubmit":[{"hooks":[{"type":"command","command":"sh \"${CLAUDE_PLUGIN_ROOT}/hooks/remind.sh\" UserPromptSubmit","timeout":5}]}]}}

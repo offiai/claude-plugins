@@ -1,0 +1,1 @@
+{"mcpServers":{"offiai":{"command":"/bin/sh","args":["${CLAUDE_PLUGIN_ROOT}/mcp/launch.sh"]}}}

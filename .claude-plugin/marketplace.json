@@ -1,0 +1,16 @@
+{
+  "name": "offiai",
+  "owner": { "name": "OffiAI", "email": "preview@offiai.app" },
+  "metadata": { "description": "Plugins that show your AI sessions in OffiAI's 3D office on your Mac." },
+  "plugins": [
+    {
+      "name": "offiai",
+      "source": "./plugins/offiai",
+      "description": "Show your Claude desktop app (Cowork) conversations at desks in OffiAI. Needs OffiAI and Node.js 18+ on the same Mac.",
+      "version": "0.2.1",
+      "author": { "name": "OffiAI" },
+      "homepage": "https://offiai.app/install/claude-cowork/",
+      "license": "MIT"
+    }
+  ]
+}
