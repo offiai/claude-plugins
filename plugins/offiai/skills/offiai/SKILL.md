@@ -36,6 +36,11 @@ shortens a text over 2000 characters. Do not retry it when it answers "not runni
 "invalid", "does not show replies", "already sent", "not shown" or "no prompt event", and
 send no new prompt event to make up for "no prompt event".
 
+Conversation id: when an OffiAI reminder names this conversation id (cse_ plus 24 letters
+or digits), pass it unchanged as `host_session_id` in `offiai_event` and `offiai_reply`.
+Without such a reminder, omit it: never guess it, build it or run commands to find it.
+OffiAI uses it only to keep this conversation's desk apart and to open it in Claude.
+
 If the tool answers "not running or not paired", do not retry and do not mention it again.
 If the offiai tools are missing entirely, no call is required; tell the user once:
 "OffiAI's bridge did not start — open the OffiAI install page (Node.js 18+ is required)."
@@ -53,7 +58,9 @@ Prompt/progress activity becomes idle after 60 seconds without a new accepted ev
 idle means activity expired, not verified completion. Quiet live desks remain.
 It ends when the bridge stops (or after 180 seconds without accepted bridge contact).
 The same supplied key means the same desk: a renamed label sent as a new key makes
-a new desk while the old one remains live with the bridge. Keeping the original stable
-label preserves the desk. Two conversations with the same key under one bridge collide.
+a new desk unless the same `host_session_id` comes with it, while the old one remains live
+with the bridge. Keeping the original stable label preserves the desk. Without a
+conversation id, two conversations with the same key under one bridge collide; with
+different ids they keep separate desks.
 Labels on different bridges remain separate. App restart loses in-memory desk history;
 only new conversation events restore active desks, never heartbeat replay.

@@ -39,9 +39,12 @@ In this preview, ask Claude to report the conversation, for example "Report this
   shortens it to at most 2000 UTF-16 units. OffiAI shows a reply only on a live desk of that
   conversation, masks credentials, e-mail addresses and local paths, and keeps it only in memory while it runs. Claude is
   instructed never to send secrets or credentials and, apart from those replies, never personal data, verbatim prompts,
-  file contents or transcripts, and to use a neutral label for a sensitive topic.
+  file contents or transcripts, and to use a neutral label for a sensitive topic. When Claude passes it, the
+  conversation's id from Claude's workspace (`cse_…`), so OffiAI's **Open in Claude** button can open that
+  conversation; OffiAI uses it for nothing else and keeps it only in memory.
 - **Skill `offiai`** — the reporting rules below.
-- **Hooks** (`SessionStart`, `UserPromptSubmit`) — `hooks/remind.sh` prints a one-line reminder for Claude. It reads
+- **Hooks** (`SessionStart`, `UserPromptSubmit`) — `hooks/remind.sh` prints a one-line reminder for Claude; in a Cowork
+  workspace it includes this conversation's id (read from the workspace environment) so Claude can pass it on. It reads
   no files and uses no network. It stays silent in a local Claude Code CLI.
 - If OffiAI is not open, the tools answer "not running or not paired" and nothing is sent.
 
@@ -66,7 +69,8 @@ Claude is instructed never to call it after the answer, so the full answer stays
 other conversations; the bridge refuses a second reply for the same turn and shortens a reply that is still too long.
 
 A desk stays while the bridge runs and goes idle a minute after the last report; when the Claude app stops the bridge
-its desks end and leave the office a few seconds later. Two conversations with the same label share a desk.
+its desks end and leave the office a few seconds later. Two conversations with the same label share a desk unless
+Claude passes each conversation's id.
 
 ## Asking from OffiAI
 
@@ -74,7 +78,9 @@ Click a Cowork desk in OffiAI, write a question in its drawer and press **New Co
 Cowork task with your text filled in, followed by the line `(from OffiAI)`. Claude shows a caution banner for text that
 comes from a link; that is expected. Nothing is sent until you press send in Claude. Claude is instructed to send a copy
 of its answer, which appears on the new task's desk (plugin 0.3.0 or later; with an older plugin the answer shows in
-Claude only, and the drawer says so). OffiAI never types into Claude and needs no extra macOS permission.
+Claude only, and the drawer says so). OffiAI never types into Claude and needs no extra macOS permission. When a Cowork
+desk knows its conversation's id, its drawer also shows **Open in Claude**, which brings that conversation to the front
+in the Claude app; nothing is typed or sent.
 
 ## Privacy, support, licence
 

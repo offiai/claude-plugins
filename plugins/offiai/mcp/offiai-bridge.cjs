@@ -11,6 +11,7 @@ var import_node_path = require("node:path");
 var HTTP_TIMEOUT_MS = 1500;
 var HEARTBEAT_INTERVAL_MS = 6e4;
 var MAX_LINE_BYTES = 64 * 1024;
+var COWORK_TASK_ID = /^cse_[A-Za-z0-9]{24}$/;
 var BRIDGE_VERSION = "0.3.1";
 var MAX_BODY_BYTES = 4096;
 var LEGACY_VERSION = "0.2.0";
@@ -32,8 +33,11 @@ var PRIVACY_RULE = ` Never send secrets or credentials. Apart from the offiai_re
 var BRIDGE_INSTRUCTIONS = "The user runs OffiAI, which shows conversations at desks on this Mac. " + REPORTING_RULE + PRIVACY_RULE;
 var EVENT_DESCRIPTION = REPORTING_RULE + PRIVACY_RULE;
 var REPLY_DESCRIPTION = 'Only in the Claude desktop app, and only when the current user message ends with the line "(from OffiAI)": report first with offiai_event(kind:"prompt"), do the work, then call offiai_reply once with the same conversation value and a copy of your answer, at most 2000 characters; if the answer is longer, send a summary of at most 2000 characters that ends with "Full answer in Claude.". Then write the complete answer for the user as text after this call, after the LAST tool call: the reply is a copy; the visible answer follows this call. Never call it on other turns or after answer text. The bridge takes one reply per prompt event of the conversation and shortens a longer text. Do not retry if it answers not running, invalid, does not show replies, already sent, not shown or no prompt event. Never include secrets or credentials.';
+var HOST_ID_DESCRIPTION = "Optional: the conversation id that an OffiAI reminder named (cse_ plus 24 letters or digits), copied exactly. Omit it when no reminder named one; never guess it or run commands to find it.";
+var HOST_ID_PROPERTY = { type: "string", description: HOST_ID_DESCRIPTION };
 var CLI_DESCRIPTION = "Not needed in the Claude Code CLI: OffiAI observes CLI sessions directly. Do not call it.";
 var record = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+var hostOf = (value) => typeof value === "string" && COWORK_TASK_ID.test(value) ? { hostSessionId: value } : {};
 function parseEvent(value) {
   if (!record(value)) return "expected an object";
   const kind = value["kind"];
@@ -42,8 +46,8 @@ function parseEvent(value) {
   if (typeof conversation !== "string" || !conversation.trim() || conversation.trim().length > 120 || /[\r\n]/.test(conversation)) return "conversation";
   if (typeof value["summary"] !== "string" || value["summary"].length > 280 || /[\r\n]/.test(value["summary"])) return "summary";
   if (value["task"] !== void 0 && (typeof value["task"] !== "string" || value["task"].length > 120 || /[\r\n]/.test(value["task"]))) return "task";
-  if (Object.keys(value).some((key) => !["kind", "conversation", "summary", "task"].includes(key))) return "unknown field";
-  return { kind, conversation: conversation.trim(), summary: value["summary"], ...typeof value["task"] === "string" ? { task: value["task"] } : {} };
+  if (Object.keys(value).some((key) => !["kind", "conversation", "summary", "task", "host_session_id"].includes(key))) return "unknown field";
+  return { kind, conversation: conversation.trim(), summary: value["summary"], ...typeof value["task"] === "string" ? { task: value["task"] } : {}, ...hostOf(value["host_session_id"]) };
 }
 var REPLY_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f]/;
 var LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
@@ -62,8 +66,8 @@ function parseReply(value) {
   if (typeof conversation !== "string" || !conversation.trim() || conversation.trim().length > 120 || /[\r\n]/.test(conversation)) return "conversation";
   const text = typeof value["text"] === "string" ? value["text"].replace(/\r\n/g, "\n") : null;
   if (text === null || !text.trim() || REPLY_CONTROL.test(text) || LONE_SURROGATE.test(text)) return "text";
-  if (Object.keys(value).some((key) => !["conversation", "text"].includes(key))) return "unknown field";
-  return { conversation: conversation.trim(), ...fitReply(text) };
+  if (Object.keys(value).some((key) => !["conversation", "text", "host_session_id"].includes(key))) return "unknown field";
+  return { conversation: conversation.trim(), ...fitReply(text), ...hostOf(value["host_session_id"]) };
 }
 function parsePairing(text, mode) {
   if ((mode & 127) !== 0) return null;
@@ -125,7 +129,7 @@ function createCoworkBridge(ports) {
       });
     });
   }
-  async function send(pairing, type, deadline, event) {
+  async function send(pairing, type, deadline, event, host) {
     const remaining = deadline - ports.now();
     if (remaining <= 0) return unavailable;
     const fallback = type === "session.start" && !isLegacy(pairing);
@@ -133,6 +137,7 @@ function createCoworkBridge(ports) {
     const { body, shortened } = serialize({
       v: 1,
       session: ports.session,
+      ...type === "event" && host !== void 0 && !isLegacy(pairing) ? { host_session_id: host } : {},
       seq: seq++,
       type,
       at: ports.now(),
@@ -159,7 +164,7 @@ function createCoworkBridge(ports) {
     acknowledged = null;
     return { reachable: false, paired: true };
   }
-  async function deliver(type, deadline, event) {
+  async function deliver(type, deadline, event, host) {
     if (cli || ended && type !== "session.end") return unavailable;
     while (ports.now() < deadline) {
       const pairing = await bounded(ports.readPairing(), deadline, null);
@@ -177,16 +182,16 @@ function createCoworkBridge(ports) {
         continue;
       }
       if (event?.kind === "reply" && isLegacy(pairing)) return { reachable: true, paired: true, legacy: true };
-      const result = await send(pairing, type, deadline, event);
+      const result = await send(pairing, type, deadline, event, host);
       if (type === "session.start" && result.reachable) acknowledged = pairing;
       return result;
     }
     return unavailable;
   }
-  function post(type, event) {
+  function post(type, event, host) {
     if (cli || ended && type !== "session.end") return Promise.resolve(unavailable);
     const deadline = ports.now() + HTTP_TIMEOUT_MS;
-    const work = queue.then(() => deliver(type, deadline, event)).catch(() => unavailable);
+    const work = queue.then(() => deliver(type, deadline, event, host)).catch(() => unavailable);
     queue = work.then(() => void 0);
     return bounded(work, deadline, unavailable);
   }
@@ -205,13 +210,14 @@ function createCoworkBridge(ports) {
   async function call(name, args) {
     if (name === "offiai_event") {
       if (cli) return textResult(CLI_MESSAGE);
-      const event = parseEvent(args);
-      if (typeof event === "string") return textResult(`OffiAI: invalid event (${event}) \u2014 not sent.`);
+      const parsed = parseEvent(args);
+      if (typeof parsed === "string") return textResult(`OffiAI: invalid event (${parsed}) \u2014 not sent.`);
+      const { hostSessionId, ...event } = parsed;
       if (event.kind === "prompt") {
         const state = touch(event.conversation);
         state.armed = Math.min(state.armed + 1, MAX_ARMED);
       }
-      const result = await post("event", event);
+      const result = await post("event", event, hostSessionId);
       return textResult(result.reachable ? `OffiAI: shown. Conversation: "${event.conversation.slice(0, 120)}".` : NOT_PAIRED);
     }
     if (name === "offiai_reply") {
@@ -222,7 +228,7 @@ function createCoworkBridge(ports) {
       if (!turn?.armed) return textResult(turn && (turn.replied || turn.sending > 0) ? REPLY_ALREADY : REPLY_NO_PROMPT);
       turn.armed--;
       turn.sending++;
-      const { shortened, ...copy } = reply, result = await post("event", { kind: "reply", ...copy });
+      const { shortened, hostSessionId, ...copy } = reply, result = await post("event", { kind: "reply", ...copy }, hostSessionId);
       const state = touch(reply.conversation);
       state.sending = Math.max(state.sending - 1, 0);
       if (result.reachable) state.replied = true;
@@ -258,8 +264,8 @@ function createCoworkBridge(ports) {
         break;
       case "tools/list":
         result = { tools: [
-          { name: "offiai_event", description: cli ? CLI_DESCRIPTION : EVENT_DESCRIPTION, inputSchema: { type: "object", properties: { kind: { type: "string", enum: ["prompt", "progress", "done", "blocked"] }, conversation: { type: "string", minLength: 1, maxLength: 120, description: "First neutral topic \xB7 MM-DD HH:MM; later copy the earliest offiai_event conversation value verbatim. Nonblank single line, trimmed, at most 120 characters" }, summary: { type: "string", maxLength: 280 }, task: { type: "string", maxLength: 120 } }, required: ["kind", "conversation", "summary"], additionalProperties: false } },
-          { name: "offiai_reply", description: cli ? CLI_DESCRIPTION : REPLY_DESCRIPTION, inputSchema: { type: "object", properties: { conversation: { type: "string", minLength: 1, maxLength: 120 }, text: { type: "string", minLength: 1, maxLength: REPLY_MAX } }, required: ["conversation", "text"], additionalProperties: false } },
+          { name: "offiai_event", description: cli ? CLI_DESCRIPTION : EVENT_DESCRIPTION, inputSchema: { type: "object", properties: { kind: { type: "string", enum: ["prompt", "progress", "done", "blocked"] }, conversation: { type: "string", minLength: 1, maxLength: 120, description: "First neutral topic \xB7 MM-DD HH:MM; later copy the earliest offiai_event conversation value verbatim. Nonblank single line, trimmed, at most 120 characters" }, summary: { type: "string", maxLength: 280 }, task: { type: "string", maxLength: 120 }, host_session_id: HOST_ID_PROPERTY }, required: ["kind", "conversation", "summary"], additionalProperties: false } },
+          { name: "offiai_reply", description: cli ? CLI_DESCRIPTION : REPLY_DESCRIPTION, inputSchema: { type: "object", properties: { conversation: { type: "string", minLength: 1, maxLength: 120 }, text: { type: "string", minLength: 1, maxLength: REPLY_MAX }, host_session_id: HOST_ID_PROPERTY }, required: ["conversation", "text"], additionalProperties: false } },
           { name: "offiai_status", description: "Check the local OffiAI bridge", inputSchema: { type: "object", properties: {}, additionalProperties: false } }
         ] };
         break;
