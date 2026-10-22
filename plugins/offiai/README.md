@@ -26,7 +26,9 @@ In this preview, ask Claude to report the conversation, for example "Report this
 - **Local MCP server** — `mcp/launch.sh` finds Node.js and starts `mcp/offiai-bridge.cjs` on your Mac while the Claude
   app is open. The bridge reads the pairing file that OffiAI writes at
   `~/Library/Application Support/OffiAI/bridge.json` (a local port and a token) and sends its messages only to OffiAI
-  on 127.0.0.1. It contacts no other address and writes no files.
+  on 127.0.0.1. The bridge contacts no other address and writes no files. Only when no Node.js 18+ is found,
+  `launch.sh` writes `~/Library/Application Support/OffiAI/bridge-status.json` (the state `no-node` and a time) so
+  OffiAI can tell you why the bridge did not start.
 - **Tools** — `offiai_event` reports a step of the conversation; `offiai_status` checks the connection to OffiAI.
 - **What OffiAI receives** — the conversation label Claude chooses (a short topic plus the start time), one-line
   summaries in Claude's own words, an optional task title, and app-scoped bridge start, heartbeat (every 60 seconds)
