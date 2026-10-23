@@ -12,7 +12,7 @@
       "name": "offiai",
       "source": "./plugins/offiai",
       "description": "Show your Claude desktop app (Cowork) conversations at desks in OffiAI. Needs OffiAI and Node.js 18+ on the same Mac.",
-      "version": "0.3.2",
+      "version": "0.4.0",
       "author": {
         "name": "OffiAI"
       },

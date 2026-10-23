@@ -7,7 +7,8 @@ what you asked, with the one-line notes Claude sends about its work.
 ## Requirements
 
 - macOS with the OffiAI app open on the same Mac (preview builds: https://offiai.app/#get and
-  https://github.com/offiai/releases/releases).
+  https://github.com/offiai/releases/releases). Plugin 0.4.0 requires OffiAI beta 23 or newer. Install the app update
+  before updating this plugin; an older app receives an update-required reply from the bridge.
 - Node.js 18 or newer. The plugin's small bridge runs with the Node.js already on your Mac; if it finds none, it tries
   the Claude app's own runtime. If it still cannot start, install Node.js from https://nodejs.org and restart the
   Claude app. An organization policy can block plugin MCP servers.
@@ -29,13 +30,16 @@ In this preview, ask Claude to report the conversation, for example "Report this
   on 127.0.0.1. The bridge contacts no other address and writes no files. Only when no Node.js 18+ is found,
   `launch.sh` writes `~/Library/Application Support/OffiAI/bridge-status.json` (the state `no-node` and a time) so
   OffiAI can tell you why the bridge did not start.
+- **Policy and responses** — the local bridge forwards MCP requests to OffiAI and returns the app's result. OffiAI
+  supplies tool instructions, validation, reply limits, delivery outcomes and status interpretation. The bridge keeps
+  private pairing lookup, ordered bounded HTTP transport and the app-version handshake.
 - **Tools** — `offiai_event` reports a step of the conversation; `offiai_reply` sends a copy of Claude's answer, which
   Claude is instructed to call only for a task you started from OffiAI; `offiai_status` checks the connection to OffiAI.
 - **What OffiAI receives** — the conversation label Claude chooses (a short topic plus the start time), one-line
   summaries (Claude is instructed to write them in its own words), an optional task title, and app-scoped bridge start, heartbeat (every 60 seconds)
   and end messages. Claude is instructed to send a copy of its answer only for a task you start from OffiAI's
   **New Cowork task** button (its text ends with the line `(from OffiAI)`), and on no other turn or conversation. The
-  bridge sends at most one reply per reported turn (one per `offiai_event(kind:"prompt")` of that conversation) and
+  app accepts at most one reply per reported turn (one per `offiai_event(kind:"prompt")` of that conversation) and
   shortens it to at most 2000 UTF-16 units. OffiAI shows a reply only on a live desk of that
   conversation, masks credentials, e-mail addresses and local paths, and keeps it only in memory while it runs. Claude is
   instructed never to send secrets or credentials and, apart from those replies, never personal data, verbatim prompts,
@@ -46,7 +50,8 @@ In this preview, ask Claude to report the conversation, for example "Report this
 - **Hooks** (`SessionStart`, `UserPromptSubmit`) — `hooks/remind.sh` prints a one-line reminder for Claude; in a Cowork
   workspace it includes this conversation's id (read from the workspace environment) so Claude can pass it on. It reads
   no files and uses no network. It stays silent in a local Claude Code CLI.
-- If OffiAI is not open, the tools answer "not running or not paired" and nothing is sent.
+- If OffiAI is not open, the bridge returns a transport-unavailable error and nothing is sent. If the app is older than
+  beta 23, the bridge asks you to update OffiAI for this plugin version.
 
 ## Rules Claude follows
 
@@ -66,7 +71,7 @@ Only when your message ends with the line `(from OffiAI)`: Claude reports first,
 `offiai_reply` once with a copy of its answer (at most 2000 characters; a longer answer is summarized and ends with
 "Full answer in Claude."), and writes the complete answer after that call. The reply comes before the visible answer:
 Claude is instructed never to call it after the answer, so the full answer stays visible in Claude. Claude is instructed to send no reply on later turns and in
-other conversations; the bridge refuses a second reply for the same turn and shortens a reply that is still too long.
+other conversations; OffiAI refuses a second reply for the same turn and shortens a reply that is still too long.
 
 A desk stays while the bridge runs and goes idle a minute after the last report; when the Claude app stops the bridge
 its desks end and leave the office a few seconds later. Two conversations with the same label share a desk unless
@@ -85,4 +90,4 @@ in the Claude app; nothing is typed or sent.
 ## Privacy, support, licence
 
 Everything stays on your Mac. Website privacy policy: https://offiai.app/en/privacy.html. Questions:
-preview@offiai.app. Licence: proprietary, all rights reserved (Delicatino GmbH).
+preview@offiai.app. Licence: proprietary, all rights reserved.
