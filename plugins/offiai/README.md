@@ -85,4 +85,4 @@ in the Claude app; nothing is typed or sent.
 ## Privacy, support, licence
 
 Everything stays on your Mac. Website privacy policy: https://offiai.app/en/privacy.html. Questions:
-preview@offiai.app. Licence: MIT.
+preview@offiai.app. Licence: proprietary, all rights reserved (Delicatino GmbH).
